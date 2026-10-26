@@ -8,7 +8,9 @@ import numpy as np
 import torch
 from nitorch import io
 
-from unires._util import _write_image
+from unires._core import _write_data
+from unires._util import _read_label, _write_image
+from unires.struct import _input, _output, settings
 
 
 class TestWriteImage(unittest.TestCase):
@@ -69,6 +71,34 @@ class TestWriteImage(unittest.TestCase):
         labels = torch.arange(8, dtype=torch.float32).reshape(2, 2, 2)
         self.check_round_trip('int16', data=labels,
                               file=self.template('float32'), dtype='int16')
+
+    def test_write_data_preserves_label_dtype(self):
+        labels = np.arange(8, dtype=np.int16).reshape(2, 2, 2)
+        template = self.directory / 'labels.nii.gz'
+        nib.save(nib.Nifti1Image(labels, self.affine), str(template))
+        sett = settings()
+        sett.device = 'cpu'
+        sett.dir_out = str(self.directory)
+        sett.do_print = 0
+        image = _input()
+        image.dat = self.data
+        image.dim = self.data.shape
+        image.file = io.map(str(template))
+        _read_label(image, str(template), sett)
+        output = _output()
+        output.dat = self.data.clone()
+        output.mat = torch.from_numpy(self.affine)
+        output.label = image.label[0]
+
+        _, paths, _, label_path = _write_data([[image]], [output], sett)
+
+        written_label = nib.load(label_path)
+        self.assertEqual(written_label.get_data_dtype(), labels.dtype)
+        np.testing.assert_array_equal(written_label.get_fdata(), labels)
+        np.testing.assert_array_equal(written_label.affine, self.affine)
+        written_image = nib.load(paths[0])
+        self.assertEqual(written_image.get_data_dtype(), np.dtype('float32'))
+        np.testing.assert_array_equal(written_image.get_fdata(), self.data.numpy())
 
     def test_bids_filename_with_requested_dtype(self):
         self.check_round_trip('float64', file=self.template('int16'),
